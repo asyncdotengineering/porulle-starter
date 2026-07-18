@@ -1,0 +1,21 @@
+{
+  "name": "porulle-starter",
+  "private": true,
+  "description": "Production-ready headless commerce starter: porulle backend + Next.js storefront + Stripe checkout.",
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "start": "turbo run start",
+    "lint": "turbo run lint",
+    "check-types": "turbo run check-types",
+    "db:push": "pnpm --filter backend db:push",
+    "seed": "pnpm --filter backend seed"
+  },
+  "devDependencies": {
+    "turbo": "^2.8.14"
+  },
+  "packageManager": "pnpm@10.33.0",
+  "engines": {
+    "node": ">=20"
+  }
+}
