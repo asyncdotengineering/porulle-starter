@@ -1,7 +1,6 @@
 "use server";
 
 import { cookies } from "next/headers";
-import { redirect } from "next/navigation";
 
 import type { CustomerOrder, CustomerOrderSummary, CustomerProfile } from "@/lib/types";
 
@@ -35,12 +34,6 @@ function decode(token: string | undefined): CustomerSession | null {
 export async function getCustomerSession(): Promise<CustomerSession | null> {
   const cookieStore = await cookies();
   return decode(cookieStore.get(COOKIE)?.value);
-}
-
-export async function requireCustomer(): Promise<CustomerSession> {
-  const session = await getCustomerSession();
-  if (!session) redirect("/account/login");
-  return session;
 }
 
 export async function signInCustomer(email: string, password: string): Promise<{ error?: string; ok: boolean }> {
@@ -121,13 +114,6 @@ export async function signUpCustomer(
 
 export async function signOutCustomer(): Promise<void> {
   (await cookies()).delete(COOKIE);
-}
-
-function createCustomerClient(token: string) {
-  return porulle as typeof porulle & {
-    GET: (path: string, init?: { params?: { path?: Record<string, string>; query?: Record<string, unknown> } }) => Promise<unknown>;
-    POST: (path: string, init?: { body?: unknown }) => Promise<unknown>;
-  };
 }
 
 function centsToMoney(amount: number, currency = "USD"): { amount: string; currencyCode: string } {
