@@ -10,11 +10,20 @@ import {
 } from "@/lib/cart/server";
 import type { Cart, CartWarning, DiscountAllocation, ProductDetails } from "@/lib/types";
 
-import { porulleWrite } from "../client";
+import { porulleShopperClient, porulleWrite, type WriteClient } from "../client";
 import { decodeMerchandiseId, toMoney, transformCart } from "../transforms";
 import type { PorulleCart } from "../types/porulle";
+import { getCustomerSession } from "./customer";
 import { getProductById } from "./products";
 import { validatePromotionForCart } from "./promotions";
+
+// Cart and checkout writes run as the signed-in shopper (their Better Auth token)
+// when there is one, so the cart is owned by — and the resulting order attributed
+// to — their customer account. Guests fall back to the shared storefront key.
+export async function writeClient(): Promise<WriteClient> {
+  const session = await getCustomerSession();
+  return session ? porulleShopperClient(session.token) : porulleWrite;
+}
 
 interface CartResult {
   cart: Cart;
@@ -48,8 +57,11 @@ async function hydrate(cart: PorulleCart): Promise<Cart> {
   return transformCart(cart, byEntity);
 }
 
-async function fetchPorulleCart(id: string): Promise<PorulleCart | undefined> {
-  const res = await porulleWrite.GET("/api/carts/{id}", { params: { path: { id } } } as never);
+async function fetchPorulleCart(id: string, client?: WriteClient): Promise<PorulleCart | undefined> {
+  const c = client ?? (await writeClient());
+  const res = await c.GET("/api/carts/{id}", { params: { path: { id } } } as never);
+  // Not-found OR not-yours both return undefined — a signed-in shopper cannot
+  // read a guest/key-owned cart, which is how the identity handoff stays safe.
   if ((res as { error?: unknown }).error) return undefined;
   return cartFrom((res as { data: unknown }).data);
 }
@@ -107,8 +119,9 @@ export async function getCart(cartId?: string): Promise<Cart | undefined> {
   return reflectDiscounts(await hydrate(porulleCart), await getAppliedDiscountsFromCookie());
 }
 
-async function createPorulleCart(): Promise<PorulleCart> {
-  const res = await porulleWrite.POST("/api/carts", { body: { currency: "USD" } } as never);
+async function createPorulleCart(client?: WriteClient): Promise<PorulleCart> {
+  const c = client ?? (await writeClient());
+  const res = await c.POST("/api/carts", { body: { currency: "USD" } } as never);
   assertOk(res as { error?: unknown }, "create cart");
   return cartFrom((res as { data: unknown }).data);
 }
@@ -135,15 +148,46 @@ async function ensureCartId(): Promise<string> {
   return created.id;
 }
 
+// On sign-in/up, move the anonymous guest cart (owned by the storefront key) onto
+// the freshly-authenticated shopper so their in-progress items survive the login
+// — otherwise the shopper-scoped client can no longer read the key-owned cart and
+// it would silently appear empty. Best effort: any failure just leaves the
+// shopper with a fresh cart on their next add.
+export async function migrateGuestCartToShopper(token: string): Promise<void> {
+  const guestCartId = await getCartIdFromCookie();
+  if (!guestCartId) return;
+  try {
+    // Read the guest cart as the key (its owner), not as the new shopper.
+    const guest = await fetchPorulleCart(guestCartId, porulleWrite);
+    if (!guest || guest.status !== "active" || guest.lineItems.length === 0) return;
+    const shopper = porulleShopperClient(token);
+    const created = await createPorulleCart(shopper);
+    for (const li of guest.lineItems) {
+      await shopper.POST("/api/carts/{id}/items", {
+        params: { path: { id: created.id } },
+        body: {
+          entityId: li.entityId,
+          ...(li.variantId ? { variantId: li.variantId } : {}),
+          quantity: li.quantity,
+        },
+      } as never);
+    }
+    await setCartIdCookie(created.id);
+  } catch {
+    // Non-fatal — the shopper simply starts a fresh cart.
+  }
+}
+
 export async function addToCart(
   lines: Array<{ merchandiseId: string; quantity: number }>,
   explicitCartId?: string,
   _locale?: string,
 ): Promise<CartResult> {
   const cartId = explicitCartId ?? (await ensureCartId());
+  const client = await writeClient();
   for (const line of lines) {
     const { entityId, variantId } = decodeMerchandiseId(line.merchandiseId);
-    const res = await porulleWrite.POST("/api/carts/{id}/items", {
+    const res = await client.POST("/api/carts/{id}/items", {
       params: { path: { id: cartId } },
       body: { entityId, ...(variantId ? { variantId } : {}), quantity: line.quantity },
     } as never);
@@ -163,8 +207,9 @@ export async function updateCart(
 ): Promise<CartResult> {
   const cartId = explicitCartId ?? (await getCartIdFromCookie());
   if (!cartId) return { cart: emptyCart(), warnings: [] };
+  const client = await writeClient();
   for (const line of lines) {
-    await porulleWrite.PATCH("/api/carts/{id}/items/{itemId}", {
+    await client.PATCH("/api/carts/{id}/items/{itemId}", {
       params: { path: { id: cartId, itemId: line.id } },
       body: { quantity: line.quantity },
     } as never);
@@ -180,8 +225,9 @@ export async function updateCart(
 export async function removeFromCart(itemIds: string[], explicitCartId?: string): Promise<CartResult> {
   const cartId = explicitCartId ?? (await getCartIdFromCookie());
   if (!cartId) return { cart: emptyCart(), warnings: [] };
+  const client = await writeClient();
   for (const itemId of itemIds) {
-    await porulleWrite.DELETE("/api/carts/{id}/items/{itemId}", {
+    await client.DELETE("/api/carts/{id}/items/{itemId}", {
       params: { path: { id: cartId, itemId } },
     } as never);
   }

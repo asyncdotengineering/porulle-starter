@@ -2,7 +2,7 @@ import "server-only";
 
 import { getCartIdFromCookie } from "@/lib/cart/server";
 
-import { porulleWrite } from "../client";
+import { writeClient } from "./cart";
 
 export interface ShippingAddress {
   city: string;
@@ -41,7 +41,10 @@ export async function createCheckout(input: {
   const cartId = await getCartIdFromCookie();
   if (!cartId) throw new Error("Your cart is empty.");
 
-  const res = await porulleWrite.POST("/api/checkout", {
+  // Runs as the signed-in shopper (so order.customerId is their account) or as
+  // the storefront key for guest checkout — matching whoever owns the cart.
+  const client = await writeClient();
+  const res = await client.POST("/api/checkout", {
     body: {
       cartId,
       paymentMethodId: "stripe",

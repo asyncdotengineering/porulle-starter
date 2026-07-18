@@ -23,4 +23,19 @@ export const porulleWrite = PORULLE_STOREFRONT_API_KEY
     })
   : porulle;
 
+// A write client that authenticates as a signed-in shopper via their Better Auth
+// session token, so their cart and checkout are owned by — and their order
+// attributed to — their own customer account rather than the shared key's
+// identity. Guests keep using porulleWrite (the key).
+export function porulleShopperClient(token: string) {
+  return createClient<paths>({
+    baseUrl: PORULLE_API_URL,
+    auth: { type: "bearer" as const, token },
+  });
+}
+
+// Either the keyed storefront client or a shopper-scoped one — both share the
+// same request surface, so cart/checkout code can hold whichever fits the caller.
+export type WriteClient = typeof porulleWrite;
+
 export const porulleApiUrl = PORULLE_API_URL;

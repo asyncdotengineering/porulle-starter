@@ -73,6 +73,10 @@ export async function signInCustomer(email: string, password: string): Promise<{
     path: "/",
     maxAge: MAX_AGE,
   });
+  // Carry any anonymous guest cart onto the now-signed-in shopper. Dynamic import
+  // avoids a static import cycle (cart.ts reads getCustomerSession from here).
+  const { migrateGuestCartToShopper } = await import("./cart");
+  await migrateGuestCartToShopper(body.token);
   return { ok: true };
 }
 
@@ -110,6 +114,8 @@ export async function signUpCustomer(
     path: "/",
     maxAge: MAX_AGE,
   });
+  const { migrateGuestCartToShopper } = await import("./cart");
+  await migrateGuestCartToShopper(body.token);
   return { ok: true };
 }
 
